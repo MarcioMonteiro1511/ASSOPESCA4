@@ -161,20 +161,38 @@
             { u: "terezinha", p: "123", n: "Terezinha", r: "colab", first: true }
         ];
 
-        async function saveAttendance() {
-  const { data, error } = await supabase
-    .from('records')
-    .insert([
-      { colab: currentU.n, socio, insc, serv }
-    ]);
-}
+        // initialize the in‑browser database (fallback when Supabase isn't used)
+        let db = JSON.parse(localStorage.getItem('assopesca_final')) || { users: USUARIOS_INICIAIS, records: [], services: SERVICOS_LISTA };
+        let currentU = null;
+        let charts = {};
+
+        const save = () => localStorage.setItem('assopesca_final', JSON.stringify(db));
 
         // Autenticação
-        function handleLogin() {
+        async function handleLogin() {
             const u = document.getElementById('user-input').value.toLowerCase();
             const p = document.getElementById('pass-input').value;
-            currentU = db.users.find(x => x.u === u && x.p === p);
-            
+            let user = null;
+
+            // try remote lookup via Supabase if configured
+            if (typeof supabase !== 'undefined' && supabase.from) {
+                const { data, error } = await supabase
+                    .from('users')      // ensure you have a "users" table
+                    .select('*')
+                    .eq('u', u)
+                    .eq('p', p)
+                    .single();
+                if (data && !error) {
+                    user = data;
+                }
+            }
+
+            // fall back to local storage database
+            if (!user) {
+                user = db.users.find(x => x.u === u && x.p === p);
+            }
+
+            currentU = user;
             if (currentU) {
                 currentU.first ? showScreen('password-screen') : startApp();
             } else {
@@ -214,18 +232,30 @@
         }
 
         // Funções Colaborador [cite: 45, 100]
-        function saveAttendance() {
+        async function saveAttendance() {
             const socio = document.getElementById('reg-socio').value;
             const insc = document.getElementById('reg-insc').value;
             const serv = document.getElementById('reg-servico').value;
             if(!socio || !insc) return alert("Preencha os dados do sócio.");
 
-            db.records.push({
+            const record = {
                 colab: currentU.n, socio, insc, serv,
                 date: new Date().toISOString(),
                 formatted: new Date().toLocaleString('pt-BR')
-            });
+            };
+
+            db.records.push(record);
             save();
+
+            // also push to Supabase table if configured
+            if (typeof supabase !== 'undefined' && supabase.from) {
+                try {
+                    await supabase.from('records').insert(record);
+                } catch (err) {
+                    console.warn('Supabase insert failed', err);
+                }
+            }
+
             document.getElementById('reg-socio').value = '';
             document.getElementById('reg-insc').value = '';
             updateColabTable();
@@ -309,6 +339,8 @@
     </script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
 <script>
+// configure these values with your own Supabase project URL & public anon key
+// if you do not intend to use Supabase you can leave them as empty strings
 const supabase = supabase.createClient(
   "SUA_URL_AQUI",
   "SUA_CHAVE_PUBLICA_AQUI"
